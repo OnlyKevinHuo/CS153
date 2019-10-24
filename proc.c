@@ -231,7 +231,7 @@ exit(int status)
   struct proc *p;
   int fd;
   
-  proc->status = status;
+  curproc->status = status;
   if(curproc == initproc)
     panic("init exiting");
 
@@ -271,7 +271,45 @@ exit(int status)
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
 int
-wait(int *status)
+wait()
+{
+  struct proc *p;
+  int havekids, pid;
+  struct proc *curproc = myproc();
+
+  acquire(&ptable.lock);
+  for(;;){
+    havekids = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->parent != curproc)
+        continue;
+      havekids = 1;
+      if(p->state == ZOMBIE){
+        pid = p->pid;
+        kfree(p->kstack);
+        p->kstack = 0;
+        freevm(p->pgdir);
+        p->pid = 0;
+        p->parent = 0;
+        p->name[0] = 0;
+        p->killed = 0;
+        p->state = UNUSED;
+        release(&ptable.lock);
+        return pid;
+      }
+    }
+
+    if(!havekids || curproc->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+  }
+}
+
+
+int
+waitS(int *status)
 {
   struct proc *p;
   int havekids, pid;
@@ -296,7 +334,11 @@ wait(int *status)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
-        release(&ptable.lock);
+        if(status){
+	  *status = p->status;
+	  p->status = 0;
+	}
+	release(&ptable.lock);
         return pid;
       }
     }
@@ -304,6 +346,7 @@ wait(int *status)
     // No point waiting if we don't have any children.
     if(!havekids || curproc->killed){
       release(&ptable.lock);
+      if(status) *status = -1;
       return -1;
     }
 
@@ -312,10 +355,45 @@ wait(int *status)
   }
 }
 
+int
+waitpid(int pid, int *status, int options){
+  struct proc *p;
+  int exists;
+  struct proc *curproc = myproc();
+  acquire(&ptable.lock);
+  
+  for(;;){
+    exists = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+	if(p->pid != pid) continue;
+	exists = 1;
+	if(p->state == ZOMBIE){
+	  kfree(p->kstack);
+	  p->kstack = 0;
+	  freevm(p->pgdir);
+	  p->state = UNUSED;
+	  p->pid = 0;
+	  p->parent = 0;
+	  p->name[0] = 0;
+	  p->killed = 0;
+	  release(&ptable.lock);
+	  if(status != 0) *status = p->status;
+	  return(pid);
+	}	
+    }
+  
+    if(!exists || curproc->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+
+    sleep(curproc, &ptable.lock);
+  }
+}
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
-// Scheduler never returns.  It loops, doing:
+// 	Scheduler never returns.  It loops, doing:
 //  - choose a process to run
 //  - swtch to start running that process
 //  - eventually that process transfers control

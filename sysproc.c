@@ -18,16 +18,36 @@ sys_exit(void)
 {
   int status;
  
-  if(argint(0, &status) < 0) return 1;
+  argint(0, &status);
  
-  exit(0);
+  exit(status);
   return 0;  // not reached
 }
 
 int
 sys_wait(void)
 {
-  return wait(0);
+  return wait();
+}
+
+int
+sys_waitS(void)
+{
+  int *status;
+  if(argptr(0,(void*)&status, sizeof(int)) < 0) return -1;
+  return waitS(status);
+
+}
+int
+sys_waitpid(void)
+{
+  int pid;
+  int options;
+  int *status;
+  argint(0, &pid);
+  argptr(1, (char **) &status, sizeof(int*));
+  argint(2, &options);
+  return waitpid(pid, status, options);
 }
 
 int
